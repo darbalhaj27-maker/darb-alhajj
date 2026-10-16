@@ -1,0 +1,21 @@
+{
+  "name": "درب الحاج",
+  "short_name": "درب الحاج",
+  "description": "رفيق رقمي لأمن الحجاج: سوار برمز QR، وبلاغ فوري للمشرف مع الموقع المباشر.",
+  "lang": "ar",
+  "dir": "rtl",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F4EAD8",
+  "theme_color": "#F4EAD8",
+  "categories": ["travel", "utilities", "education"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
