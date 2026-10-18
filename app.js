@@ -46,6 +46,11 @@ const CONFIG = {
 if (window.__RELAY__) CONFIG.relay = window.__RELAY__;            // automated tests only
 CONFIG.alertTopic = CONFIG.topic + '-alerts';                     // only report alerts go here (phone notifications)
 
+/* languages (i18n.js): T('نص عربي') returns the text in the chosen language. Data sent between phones
+   (report types, stages, preset notices) always stays in Arabic and is translated on each phone. */
+if (!window.I18N) window.I18N = { lang: 'ar', dir: 'rtl', langs: [], T: (s, v) => String(s == null ? '' : s).replace(/\{(\w+)\}/g, (m, k) => (v && v[k] != null ? v[k] : m)), rtf: () => null, set() {}, apply() {}, info: () => null };
+const T = window.I18N.T;
+
 /* ===================== small helpers ===================== */
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -76,13 +81,17 @@ function meters(a, b) {
   const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * k) * Math.cos(b.lat * k) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(s));
 }
-const fmtDist = (m) => (m == null ? '—' : m < 1000 ? Math.round(m) + ' م' : (m / 1000).toFixed(1) + ' كم');
-function ago(t) {
-  const s = Math.max(0, (Date.now() - t) / 1000);
+const fmtDist = (m) => (m == null ? '—' : m < 1000 ? T('{n} م', { n: Math.round(m) }) : T('{n} كم', { n: (m / 1000).toFixed(1) }));
+function ago(ts) {
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  const m = Math.round(s / 60), h = Math.round(m / 60);
+  if (I18N.lang !== 'ar') {
+    const rtf = I18N.rtf();
+    if (rtf) return s < 45 ? rtf.format(0, 'second') : m < 60 ? rtf.format(-m, 'minute') : rtf.format(-h, 'hour');
+    return s < 45 ? T('الآن') : m < 60 ? T('قبل {n} د', { n: m }) : T('قبل {n} س', { n: h });
+  }
   if (s < 45) return 'الآن';
-  const m = Math.round(s / 60);
   if (m < 60) return m === 1 ? 'قبل دقيقة' : m === 2 ? 'قبل دقيقتين' : 'قبل ' + m + ' د';
-  const h = Math.round(m / 60);
   return h === 1 ? 'قبل ساعة' : 'قبل ' + h + ' س';
 }
 const clock = (t) => { const d = new Date(t); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
@@ -177,7 +186,7 @@ function ingest(ev, src) {
 
   switch (ev.k) {
     case 'hello':
-      if (live && src === 'remote' && Session.role === 'super' && !fromSup && fresh(ev, 60000)) toast('✅ سجّل الحاج ' + ev.from + ' دخوله');
+      if (live && src === 'remote' && Session.role === 'super' && !fromSup && fresh(ev, 60000)) toast(T('✅ سجّل الحاج {ref} دخوله', { ref: ev.from }));
       break;
     case 'report':
       if (!CONFIG.pilgrims.includes(ev.from) || !survivesClear(ev.t)) break;
@@ -202,7 +211,7 @@ function ingest(ev, src) {
       const r = S.reports[ev.rid];
       if (!r || r.ref !== ev.from) break;
       (S.status[ev.rid] || (S.status[ev.rid] = {})).cancel = ev.t;
-      if (live && src === 'remote' && Session.role === 'super' && fresh(ev, 120000)) toast('ألغى الحاج ' + ev.from + ' البلاغ');
+      if (live && src === 'remote' && Session.role === 'super' && fresh(ev, 120000)) toast(T('ألغى الحاج {ref} البلاغ', { ref: ev.from }));
       break;
     }
     case 'ping':
@@ -211,12 +220,12 @@ function ingest(ev, src) {
     case 'stage':
       if (!fromSup || (S.stage && S.stage.t >= ev.t)) break;
       S.stage = { stage: ev.stage, t: ev.t };
-      if (src === 'remote' && Session.role === 'pilgrim' && fresh(ev, 120000)) { toast('🧭 مجموعتك متجهة الآن إلى ' + ev.stage); Sound.chime(); haptic([80, 60, 80]); }
+      if (src === 'remote' && Session.role === 'pilgrim' && fresh(ev, 120000)) { toast(T('🧭 مجموعتك متجهة الآن إلى {s}', { s: T(ev.stage) })); Sound.chime(); haptic([80, 60, 80]); }
       break;
     case 'notice':
       if (!fromSup || ev.t < S.clearedAt) break;
       S.notices.push({ id: ev.id, text: String(ev.text || '').slice(0, 140), t: ev.t });
-      if (src === 'remote' && Session.role === 'pilgrim' && fresh(ev, 120000)) { toast('📢 تنبيه من المشرفة: ' + ev.text, 5000); Sound.chime(); haptic([120, 80, 120]); }
+      if (src === 'remote' && Session.role === 'pilgrim' && fresh(ev, 120000)) { toast(T('📢 تنبيه من المشرفة: {text}', { text: T(String(ev.text || '').slice(0, 140)) }), 5000); Sound.chime(); haptic([120, 80, 120]); }
       break;
     case 'clear': {
       const cut = Math.min(ev.before || ev.t, ev.t);
@@ -425,12 +434,12 @@ const Scanner = {
     this.stop();
     this.box = box; this.cb = cb;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      toast('الكاميرا غير متاحة هنا — اكتب الرقم المرجعي بالأسفل'); return false;
+      toast(T('الكاميرا غير متاحة هنا — اكتب الرقم المرجعي بالأسفل')); return false;
     }
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } });
     } catch (e) {
-      toast(e && e.name === 'NotAllowedError' ? 'اسمح للتطبيق باستخدام الكاميرا من إعدادات المتصفح، أو اكتب الرقم المرجعي' : 'تعذّر تشغيل الكاميرا — اكتب الرقم المرجعي بالأسفل', 4000);
+      toast(T(e && e.name === 'NotAllowedError' ? 'اسمح للتطبيق باستخدام الكاميرا من إعدادات المتصفح، أو اكتب الرقم المرجعي' : 'تعذّر تشغيل الكاميرا — اكتب الرقم المرجعي بالأسفل'), 4000);
       return false;
     }
     if (this.box !== box) { this.stream.getTracks().forEach((t) => t.stop()); return false; }
@@ -441,7 +450,7 @@ const Scanner = {
     if (!this.detector && 'BarcodeDetector' in window) {
       try { const f = await window.BarcodeDetector.getSupportedFormats(); if (f.includes('qr_code')) this.detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { /* use jsQR */ }
     }
-    if (!this.detector) { try { await loadScript('jsQR.js'); } catch (e) { toast('تعذر تحميل قارئ الرمز'); } }
+    if (!this.detector) { try { await loadScript('jsQR.js'); } catch (e) { toast(T('تعذر تحميل قارئ الرمز')); } }
     this.loop(v);
     return true;
   },
@@ -503,7 +512,7 @@ function go(id, fromPop) {
   to.classList.add('active'); to.scrollTop = 0;
   current = id;
   $$('.navbtn').forEach((b) => b.classList.toggle('active', b.dataset.go === id));
-  $('#pageName').textContent = PAGE_NAMES[id] || '';
+  $('#pageName').textContent = T(PAGE_NAMES[id] || '');
   if (id === 'places') onPlacesOpen();
   if (id === 'contact') renderContact();
   if (id === 'home') runRoute();
@@ -525,9 +534,9 @@ function onLoginPill() {
 }
 function updatePill() {
   const p = $('#loginPill');
-  if (Session.role === 'pilgrim') p.innerHTML = 'حاج ' + bdi(Session.ref);
-  else if (Session.role === 'super') p.innerHTML = 'المشرفة · لوحة المتابعة';
-  else p.textContent = 'تسجيل الدخول';
+  if (Session.role === 'pilgrim') p.innerHTML = `<span class="pw">${esc(T('حاج'))} </span>` + bdi(Session.ref);
+  else if (Session.role === 'super') p.innerHTML = esc(T('المشرفة · لوحة المتابعة'));
+  else p.textContent = T('تسجيل الدخول');
 }
 
 /* ===================== pilgrim ===================== */
@@ -535,7 +544,7 @@ function pilgrimLogin(raw) {
   const ref = normRef(raw);
   if (!CONFIG.pilgrims.includes(ref)) {
     shake('#pRef');
-    toast(isSupRef(ref) ? 'هذه بطاقة المشرفة — ادخل من «دخول كمشرف»' : 'الرقم المرجعي غير موجود في المجموعة');
+    toast(T(isSupRef(ref) ? 'هذه بطاقة المشرفة — ادخل من «دخول كمشرف»' : 'الرقم المرجعي غير موجود في المجموعة'));
     haptic([100, 50, 100]);
     return;
   }
@@ -550,7 +559,7 @@ function pilgrimLogin(raw) {
     if (r.ref === ref && !r.found && isOpen(r) && Date.now() - r.t > 10 * 60000) Relay.publish({ k: 'cancel', rid: r.rid });
   });
   scheduleRender();
-  toast('أهلًا بك 🤍 تم ربطك بالمشرفة ' + CONFIG.supervisor.name);
+  toast(T('أهلًا بك 🤍 تم ربطك بالمشرفة {name}', { name: CONFIG.supervisor.name }));
   Geo.get().then((p) => Relay.publish(Object.assign({ k: 'hello', role: 'pilgrim' }, p)))
     .catch(() => Relay.publish({ k: 'hello', role: 'pilgrim' }));
 }
@@ -558,25 +567,29 @@ const myOpenReport = () => (Session.role === 'pilgrim' ? openReports().find((r) 
 function myLatestReport() {
   return Object.values(S.reports).filter((r) => r.ref === Session.ref && !r.found).sort((a, b) => b.t - a.t)[0] || null;
 }
-let rType = 'تائه / مفقود', rFix = null;
+let rType = 'تائه / مفقود', rFix = null, locRow = ['loading', null];
 function openReport() {
-  if (myOpenReport()) { toast('عندك بلاغ مفتوح — المشرفة تتابعه الآن'); return; }
-  $('#rFor').innerHTML = 'من الرقم المرجعي ' + bdi(Session.ref) + ' إلى المشرفة ' + esc(CONFIG.supervisor.name);
+  if (myOpenReport()) { toast(T('عندك بلاغ مفتوح — المشرفة تتابعه الآن')); return; }
+  renderReportFor();
   rFix = null; setLocRow('loading');
   show('reportSheet');
   Geo.get(10000).then((p) => { rFix = p; setLocRow('ok', p); }).catch(() => setLocRow(Geo.denied ? 'denied' : 'fail'));
 }
+function renderReportFor() {
+  $('#rFor').innerHTML = T('من الرقم المرجعي {ref} إلى المشرفة {name}', { ref: bdi(Session.ref), name: esc(CONFIG.supervisor.name) });
+}
 function setLocRow(state, p) {
-  const t = {
+  locRow = [state, p];
+  const row = {
     loading: ['موقعك الحالي', 'جارٍ تحديد موقعك…'],
-    ok: ['تم تحديد موقعك ✓', 'بدقة ' + (p && p.acc ? p.acc : '?') + ' م — يوصل للمشرفة مع البلاغ ويتحدث مباشرة'],
+    ok: ['تم تحديد موقعك ✓', 'بدقة {n} م — يوصل للمشرفة مع البلاغ ويتحدث مباشرة'],
     denied: ['الموقع غير مسموح', 'فعّل خدمة الموقع للمتصفح من الإعدادات — البلاغ يوصل بدون موقع'],
     fail: ['تعذّر تحديد الموقع', 'سيوصل البلاغ الآن، ويُرسل الموقع أول ما يتوفر'],
   }[state];
-  $('#rLoc div').innerHTML = `<b>${t[0]}</b><small>${t[1]}</small>`;
+  $('#rLoc div').innerHTML = `<b>${esc(T(row[0]))}</b><small>${esc(T(row[1], { n: p && p.acc ? p.acc : '?' }))}</small>`;
 }
 $$('#rTypes .chip').forEach((c) => c.addEventListener('click', () => {
-  $$('#rTypes .chip').forEach((x) => x.classList.remove('on')); c.classList.add('on'); rType = c.textContent;
+  $$('#rTypes .chip').forEach((x) => x.classList.remove('on')); c.classList.add('on'); rType = c.dataset.type || c.textContent;
 }));
 function sendReport() {
   if (myOpenReport()) { closeSheets(); return; }
@@ -585,25 +598,25 @@ function sendReport() {
   Relay.publish(Object.assign({ k: 'report', rid, type: rType }, p.lat != null ? p : {}));
   publishAlert('report', Session.ref, rType, p);
   closeSheets();
-  showSuccess('تم إرسال البلاغ', 'يوصل التنبيه لجوال المشرفة الآن مع موقعك');
+  showSuccess(T('تم إرسال البلاغ'), T('يوصل التنبيه لجوال المشرفة الآن مع موقعك'));
   haptic([60, 40, 60]);
   startLiveShare(rid);
 }
 function cancelReport() {
   const r = myOpenReport(); if (!r) return;
-  if (!confirm('إلغاء البلاغ؟')) return;
+  if (!confirm(T('إلغاء البلاغ؟'))) return;
   Relay.publish({ k: 'cancel', rid: r.rid });
   stopLiveShare();
 }
 function shareMyLocation() {
-  toast('جارٍ تحديد موقعك…');
-  Geo.get(5000).then((p) => { Relay.publish(Object.assign({ k: 'loc' }, p)); toast('📍 تم إرسال موقعك للمشرفة'); })
-    .catch(() => toast(Geo.denied ? 'فعّل الموقع للمتصفح من الإعدادات' : 'تعذّر تحديد الموقع، حاول مرة ثانية'));
+  toast(T('جارٍ تحديد موقعك…'));
+  Geo.get(5000).then((p) => { Relay.publish(Object.assign({ k: 'loc' }, p)); toast(T('📍 تم إرسال موقعك للمشرفة')); })
+    .catch(() => toast(T(Geo.denied ? 'فعّل الموقع للمتصفح من الإعدادات' : 'تعذّر تحديد الموقع، حاول مرة ثانية')));
 }
 function callSupervisor() {
   const n = S.sup.phone || CONFIG.contact.phone;
   if (n) location.href = 'tel:' + n;
-  else toast('رقم التواصل غير مضاف بعد — ارفع بلاغ وبيوصل للمشرفة فورًا', 3800);
+  else toast(T('رقم التواصل غير مضاف بعد — ارفع بلاغ وبيوصل للمشرفة فورًا'), 3800);
 }
 function showSuccess(title, text) {
   $('#successTitle').textContent = title; $('#successText').textContent = text;
@@ -618,32 +631,32 @@ function renderPilgrim() {
   $('#pLogin').classList.toggle('hidden', logged);
   $('#pHome').classList.toggle('hidden', !logged);
   if (!logged) return;
-  const geoTxt = Geo.last ? `<span class="badge b-ok">مفعّل · ±${Geo.last.acc} م</span>` : `<button class="badge b-gold" style="border:0" onclick="enableLocation()">${Geo.denied ? 'غير مفعّل — اضغط للتفعيل' : 'تفعيل الموقع'}</button>`;
+  const geoTxt = Geo.last ? `<span class="badge b-ok">${T('مفعّل · ±{n} م', { n: Geo.last.acc })}</span>` : `<button class="badge b-gold" style="border:0" onclick="enableLocation()">${T(Geo.denied ? 'غير مفعّل — اضغط للتفعيل' : 'تفعيل الموقع')}</button>`;
   const card = $('#pCard');
   card.innerHTML = `
     <div class="who"><div class="avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="7.5" r="3.5"/><path d="M5 21c.8-4 3.6-6.5 7-6.5s6.2 2.5 7 6.5"/></svg></div>
-      <div><b>حاج في ${esc(CONFIG.groupName)}</b><div style="margin-top:4px">${bdi(Session.ref)}</div></div></div>
-    <div class="kv"><span>المجموعة</span>${bdi(CONFIG.group)}</div>
-    <div class="kv"><span>المشرفة</span><b>${esc(CONFIG.supervisor.name)}</b></div>
-    <div class="kv"><span>الاتصال بالمشرفة</span>${connBadge()}</div>
-    <div class="kv"><span>الموقع</span>${geoTxt}</div>`;
+      <div><b>${T('حاج في {g}', { g: esc(T(CONFIG.groupName)) })}</b><div style="margin-top:4px">${bdi(Session.ref)}</div></div></div>
+    <div class="kv"><span>${T('المجموعة')}</span>${bdi(CONFIG.group)}</div>
+    <div class="kv"><span>${T('المشرفة')}</span><b>${esc(CONFIG.supervisor.name)}</b></div>
+    <div class="kv"><span>${T('الاتصال بالمشرفة')}</span>${connBadge()}</div>
+    <div class="kv"><span>${T('الموقع')}</span>${geoTxt}</div>`;
   if (pilgrimFirstRender) { card.classList.remove('flip'); void card.offsetWidth; card.classList.add('flip'); pilgrimFirstRender = false; }
   const hasWa = !!waNumber();                                   // WhatsApp only when a number exists
   $('#pWaBtn').classList.toggle('hidden', !hasWa);
   $('#pContactRow').style.gridTemplateColumns = hasWa ? '' : '1fr';
 
-  $('#pStageBanner').innerHTML = S.stage ? `<div class="banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><div>مجموعتك متجهة الآن إلى ${esc(S.stage.stage)}<small>حددتها المشرفة ${ago(S.stage.t)}</small></div></div>` : '';
+  $('#pStageBanner').innerHTML = S.stage ? `<div class="banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><div>${T('مجموعتك متجهة الآن إلى {s}', { s: esc(T(S.stage.stage)) })}<small>${T('حددتها المشرفة {ago}', { ago: ago(S.stage.t) })}</small></div></div>` : '';
   const n = S.notices.filter((x) => Date.now() - x.t < 90 * 60000).sort((a, b) => b.t - a.t)[0];
-  $('#pNotice').innerHTML = n ? `<div class="banner notice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7"/></svg><div>${esc(n.text)}<small>تنبيه من المشرفة · ${ago(n.t)}</small></div></div>` : '';
+  $('#pNotice').innerHTML = n ? `<div class="banner notice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7"/></svg><div>${esc(T(n.text))}<small>${T('تنبيه من المشرفة · {ago}', { ago: ago(n.t) })}</small></div></div>` : '';
 
   const r = myOpenReport() || (() => { const l = myLatestReport(); return l && Date.now() - ((S.status[l.rid] || {}).resolve || 0) < 60000 && reportStatus(l.rid) === 'resolve' ? l : null; })();
   $('#pIdle').classList.toggle('hidden', !!r);
   if (!r) { $('#pActive').innerHTML = ''; lastShownRid = null; return; }
   const st = reportStatus(r.rid), s = S.status[r.rid] || {};
   if (prevStatus[r.rid] && prevStatus[r.rid] !== st) {
-    if (st === 'seen') { toast('✓✓ وصل بلاغك للمشرفة'); haptic(60); }
-    if (st === 'ack') { toast('🚶‍♀️ المشرفة في الطريق إليك — خلك مكانك', 4000); Sound.chime(); haptic([100, 60, 100]); }
-    if (st === 'resolve') { toast('✅ تم إغلاق البلاغ — الحمد لله على السلامة', 4000); Sound.chime(); stopLiveShare(); }
+    if (st === 'seen') { toast(T('✓✓ وصل بلاغك للمشرفة')); haptic(60); }
+    if (st === 'ack') { toast(T('🚶‍♀️ المشرفة في الطريق إليك — خلك مكانك'), 4000); Sound.chime(); haptic([100, 60, 100]); }
+    if (st === 'resolve') { toast(T('✅ تم إغلاق البلاغ — الحمد لله على السلامة'), 4000); Sound.chime(); stopLiveShare(); }
   }
   prevStatus[r.rid] = st;
   if (st === 'resolve') stopLiveShare();
@@ -653,17 +666,17 @@ function renderPilgrim() {
   const card2 = `
     <div class="card ${lastShownRid !== r.rid ? 'flip' : ''}">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <b style="font-size:16px">بلاغك: ${esc(r.type)}</b>
-        ${done ? '<span class="badge b-ok">مغلق</span>' : '<span class="livechip"><i></i>موقعك يُشارك مباشرة</span>'}
+        <b style="font-size:16px">${T('بلاغك: {type}', { type: esc(T(r.type)) })}</b>
+        ${done ? `<span class="badge b-ok">${T('مغلق')}</span>` : `<span class="livechip"><i></i>${T('موقعك يُشارك مباشرة')}</span>`}
       </div>
       <ul class="tl">
-        ${step(true, false, 1, 'تم إرسال البلاغ', 'الساعة ' + clock(r.t))}
-        ${step(seen, !seen, 2, 'وصل للمشرفة', seen ? 'الساعة ' + clock(s.seen || s.ack || r.t) : 'بانتظار وصوله لجوال المشرفة…')}
-        ${step(ack, seen && !ack, 3, 'المشرفة في الطريق إليك', ack ? (d != null ? 'تبعد عنك تقريبًا ' + fmtDist(d) : 'خلك في مكانك') : 'بعد ما تستلم البلاغ')}
-        ${step(done, ack && !done, 4, 'تم إغلاق البلاغ', done ? 'الحمد لله على السلامة 🤍' : '—')}
+        ${step(true, false, 1, T('تم إرسال البلاغ'), T('الساعة {time}', { time: clock(r.t) }))}
+        ${step(seen, !seen, 2, T('وصل للمشرفة'), seen ? T('الساعة {time}', { time: clock(s.seen || s.ack || r.t) }) : T('بانتظار وصوله لجوال المشرفة…'))}
+        ${step(ack, seen && !ack, 3, T('المشرفة في الطريق إليك'), ack ? (d != null ? T('تبعد عنك تقريبًا {d}', { d: fmtDist(d) }) : T('خلك في مكانك')) : T('بعد ما تستلم البلاغ'))}
+        ${step(done, ack && !done, 4, T('تم إغلاق البلاغ'), done ? T('الحمد لله على السلامة 🤍') : '—')}
       </ul>
-      ${ack && !done && d != null ? `<div style="text-align:center;margin:-4px 0 10px"><div class="dist">${fmtDist(d)}</div><small style="color:var(--ink2)">المسافة بينك وبين المشرفة</small></div>` : ''}
-      ${done ? '' : `${waNumber() ? '<button class="btn wa sm" style="margin-bottom:8px" onclick="whatsappHelp()">إرسال البلاغ عبر واتساب أيضًا</button>' : ''}<button class="btn ghost sm" onclick="cancelReport()">إلغاء البلاغ</button>`}
+      ${ack && !done && d != null ? `<div style="text-align:center;margin:-4px 0 10px"><div class="dist">${fmtDist(d)}</div><small style="color:var(--ink2)">${T('المسافة بينك وبين المشرفة')}</small></div>` : ''}
+      ${done ? '' : `${waNumber() ? `<button class="btn wa sm" style="margin-bottom:8px" onclick="whatsappHelp()">${T('إرسال البلاغ عبر واتساب أيضًا')}</button>` : ''}<button class="btn ghost sm" onclick="cancelReport()">${T('إلغاء البلاغ')}</button>`}
     </div>`;
   $('#pActive').innerHTML = card2;
   lastShownRid = r.rid;
@@ -674,7 +687,7 @@ function supervisorLogin(raw) {
   const ref = normRef(raw);
   if (!isSupRef(ref)) {
     shake('#sRef');
-    toast(CONFIG.pilgrims.includes(ref) ? 'هذا سوار حاج — ادخل من «دخول كحاج»' : 'الرقم المرجعي للمشرفة غير صحيح');
+    toast(T(CONFIG.pilgrims.includes(ref) ? 'هذا سوار حاج — ادخل من «دخول كحاج»' : 'الرقم المرجعي للمشرفة غير صحيح'));
     haptic([100, 50, 100]);
     return;
   }
@@ -691,14 +704,14 @@ function supervisorLogin(raw) {
   scheduleRender();
   initMap(); keepAwake(true);
   Push.refresh();
-  toast('أهلًا ' + CONFIG.supervisor.name + ' 🤍 لوحة جديدة — تم مسح العمليات السابقة');
+  toast(T('أهلًا {name} 🤍 لوحة جديدة — تم مسح العمليات السابقة', { name: CONFIG.supervisor.name }));
   Geo.get().then((p) => Relay.publish(Object.assign({ k: 'hello', role: 'super', phone: store.get('supPhone', '') || '' }, p)))
     .catch(() => Relay.publish({ k: 'hello', role: 'super', phone: store.get('supPhone', '') || '' }));
 }
 function leavePilgrim() { stopLiveShare(); }
 function leaveSupervisor() { Geo.unwatch(onSupFix); if (supShare) { supShare.cancel(); Geo.unwatch(supShare); supShare = null; } keepAwake(false); hideAlarm(); }
 function logout() {
-  if (!confirm('تسجيل الخروج من هذا الجوال؟')) return;
+  if (!confirm(T('تسجيل الخروج من هذا الجوال؟'))) return;
   if (Session.role === 'pilgrim') leavePilgrim(); else leaveSupervisor();
   Session.clear();
   Relay.disconnect();
@@ -709,40 +722,40 @@ function logout() {
 function ackReport(rid) {
   Relay.publish(Object.assign({ k: 'ack', rid }, Geo.last || {}));
   hideAlarm();
-  toast('تم الاستلام — الحاج يشوف الآن إنك في الطريق إليه');
+  toast(T('تم الاستلام — الحاج يشوف الآن إنك في الطريق إليه'));
   syncSupShare();
 }
 function resolveReport(rid) {
-  if (!confirm('تأكيد: تم العثور على الحاج وإغلاق البلاغ؟')) return;
+  if (!confirm(T('تأكيد: تم العثور على الحاج وإغلاق البلاغ؟'))) return;
   Relay.publish({ k: 'resolve', rid });
   syncSupShare();
 }
 let lastPing = 0;
 function pingGroup() {
-  if (Date.now() - lastPing < 20000) { toast('تم طلب المواقع قبل لحظات… انتظر شوي'); return; }
+  if (Date.now() - lastPing < 20000) { toast(T('تم طلب المواقع قبل لحظات… انتظر شوي')); return; }
   lastPing = Date.now();
   Relay.publish({ k: 'ping' });
-  toast('📡 تم طلب مواقع أفراد المجموعة — تظهر خلال ثوانٍ');
+  toast(T('📡 تم طلب مواقع أفراد المجموعة — تظهر خلال ثوانٍ'));
 }
 function sendNotice(text) {
   text = String(text || '').trim();
   if (!text) { shake('#sNoticeText'); return; }
   Relay.publish({ k: 'notice', text: text.slice(0, 120) });
   $('#sNoticeText').value = '';
-  toast('📢 وصل التنبيه لأفراد المجموعة');
+  toast(T('📢 وصل التنبيه لأفراد المجموعة'));
 }
 $$('#sStage button').forEach((b) => b.addEventListener('click', () => {
   Relay.publish({ k: 'stage', stage: b.dataset.s });
-  toast('🧭 تم تحديد وجهة المجموعة: ' + b.dataset.s);
+  toast(T('🧭 تم تحديد وجهة المجموعة: {s}', { s: T(b.dataset.s) }));
 }));
 function savePhone() {
   const v = $('#sPhone').value.replace(/[^\d+]/g, '');
   store.set('supPhone', v);
   Relay.publish(Object.assign({ k: 'hello', role: 'super', phone: v }, Geo.last || {}));
-  toast(v ? 'تم حفظ رقمك — زر الاتصال صار يشتغل عند الحجاج' : 'تم حذف الرقم');
+  toast(T(v ? 'تم حفظ رقمك — زر الاتصال صار يشتغل عند الحجاج' : 'تم حذف الرقم'));
 }
 function clearReports() {
-  if (!confirm('مسح كل البلاغات من اللوحة عند الجميع؟')) return;
+  if (!confirm(T('مسح كل البلاغات من اللوحة عند الجميع؟'))) return;
   Relay.publish({ k: 'clear', before: Date.now() });
 }
 function directionsUrl(p) { return `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lon}&travelmode=walking`; }
@@ -768,29 +781,32 @@ function checkUnseen() {
 }
 function showAlarm(r) {
   alarmRid = r.rid;
-  $('#alTitle').textContent = r.found ? 'تم العثور على حاج' : 'بلاغ جديد';
-  $('#alRef').textContent = r.ref;
-  $('#alType').textContent = r.type + ' · الساعة ' + clock(r.t);
-  updateAlarmDist();
+  fillAlarm(r);
   $('#alarm').classList.add('show');
   Sound.alarm(); haptic([300, 120, 300, 120, 500]);
   let n = 0;
   clearInterval(alarmTimer);
   alarmTimer = setInterval(() => { if (++n > 3 || !$('#alarm').classList.contains('show')) { clearInterval(alarmTimer); return; } Sound.alarm(); haptic([300, 120, 300]); }, 3500);
 }
+function fillAlarm(r) {
+  $('#alTitle').textContent = T(r.found ? 'تم العثور على حاج' : 'بلاغ جديد');
+  $('#alRef').textContent = r.ref;
+  $('#alType').textContent = T(r.type) + ' · ' + T('الساعة {time}', { time: clock(r.t) });
+  updateAlarmDist();
+}
 function updateAlarmDist() {
   const r = S.reports[alarmRid]; if (!r) return;
   const d = meters(supPos(), r);
-  $('#alDist').textContent = d != null ? 'يبعد عنك تقريبًا ' + fmtDist(d) : r.lat != null ? 'وصل موقعه — اضغط عرض على الخريطة' : 'بانتظار موقعه…';
+  $('#alDist').textContent = d != null ? T('يبعد عنك تقريبًا {d}', { d: fmtDist(d) }) : T(r.lat != null ? 'وصل موقعه — اضغط عرض على الخريطة' : 'بانتظار موقعه…');
 }
 function hideAlarm() { $('#alarm').classList.remove('show'); clearInterval(alarmTimer); }
 function alarmAck() { const rid = alarmRid; hideAlarm(); if (current !== 'super') go('super'); if (rid) ackReport(rid); setTimeout(() => focusReport(rid), 450); }
 function alarmShow() { const rid = alarmRid; hideAlarm(); if (current !== 'super') go('super'); setTimeout(() => focusReport(rid), 450); }
 
-function connBadge() { return Relay.online ? '<span class="conn on"><i></i><span>متصل مباشر</span></span>' : '<span class="conn"><i></i><span>جارٍ الاتصال…</span></span>'; }
+function connBadge() { return Relay.online ? `<span class="conn on"><i></i><span>${T('متصل مباشر')}</span></span>` : `<span class="conn"><i></i><span>${T('جارٍ الاتصال…')}</span></span>`; }
 function renderConn() {
   const c = $('#sConn');
-  if (c) { c.classList.toggle('on', Relay.online); c.querySelector('span').textContent = Relay.online ? 'متصل مباشر' : 'غير متصل'; }
+  if (c) { c.classList.toggle('on', Relay.online); c.querySelector('span').textContent = T(Relay.online ? 'متصل مباشر' : 'غير متصل'); }
   scheduleRender();
 }
 
@@ -801,7 +817,7 @@ function renderSupervisor() {
   $('#sDash').classList.toggle('hidden', !logged);
   if (!logged) return;
   $('#sName').innerHTML = esc(CONFIG.supervisor.name) + ' · ' + bdi(CONFIG.supervisor.ref);
-  $('#sGroup').innerHTML = 'المجموعة ' + bdi(CONFIG.group) + ' · ' + CONFIG.pilgrims.length + ' حجاج';
+  $('#sGroup').innerHTML = T('المجموعة {g} · {n} حجاج', { g: bdi(CONFIG.group), n: CONFIG.pilgrims.length });
   const me = supPos();
   const online = CONFIG.pilgrims.filter((r) => isOnline(S.members[r])).length;
   const open = openReports();
@@ -816,21 +832,21 @@ function renderSupervisor() {
     const st = reportStatus(r.rid), d = meters(me, r);
     const badge = { sent: ['جديد', 'b-alert'], seen: ['جديد', 'b-alert'], ack: ['في الطريق إليه', 'b-gold'], resolve: ['تم الحل', 'b-ok'], cancel: ['ألغاه الحاج', 'b-away'] }[st];
     const acts = st === 'sent' || st === 'seen'
-      ? `<button class="btn red" onclick="ackReport('${r.rid}')">استلام والتوجه</button>`
-      : st === 'ack' ? `<button class="btn green" onclick="resolveReport('${r.rid}')">تم العثور عليه ✓</button>` : '';
+      ? `<button class="btn red" onclick="ackReport('${r.rid}')">${T('استلام والتوجه')}</button>`
+      : st === 'ack' ? `<button class="btn green" onclick="resolveReport('${r.rid}')">${T('تم العثور عليه ✓')}</button>` : '';
     const loc = r.lat != null;
     return `<div class="rep ${isOpen(r) ? '' : 'closed'} ${Date.now() - r.t < 8000 ? 'new' : ''}" id="rep-${r.rid}">
-      <div class="l1">${bdi(r.ref)}<span class="badge ${badge[1]}">${badge[0]}</span></div>
-      <div class="l2"><span>${esc(r.type)} · الساعة ${clock(r.t)} (${ago(r.t)})</span><span>${loc ? (d != null ? 'يبعد ' + fmtDist(d) : 'وصل موقعه') : 'بدون موقع بعد'}</span></div>
-      ${isOpen(r) ? `<div class="acts">${acts}${loc ? `<button class="btn ghost" onclick="focusReport('${r.rid}')">الخريطة</button><a class="btn ghost" href="${directionsUrl(r)}" target="_blank" rel="noopener">الاتجاهات</a>` : ''}</div>` : ''}
+      <div class="l1">${bdi(r.ref)}<span class="badge ${badge[1]}">${T(badge[0])}</span></div>
+      <div class="l2"><span>${esc(T(r.type))} · ${T('الساعة {time}', { time: clock(r.t) })} (${ago(r.t)})</span><span>${loc ? (d != null ? T('يبعد {d}', { d: fmtDist(d) }) : T('وصل موقعه')) : T('بدون موقع بعد')}</span></div>
+      ${isOpen(r) ? `<div class="acts">${acts}${loc ? `<button class="btn ghost" onclick="focusReport('${r.rid}')">${T('الخريطة')}</button><a class="btn ghost" href="${directionsUrl(r)}" target="_blank" rel="noopener">${T('الاتجاهات')}</a>` : ''}</div>` : ''}
     </div>`;
-  }).join('') : '<div class="empty">لا توجد بلاغات — كل الحجاج بخير 🤍</div>';
+  }).join('') : `<div class="empty">${T('لا توجد بلاغات — كل الحجاج بخير 🤍')}</div>`;
   if (html !== lastReportsHTML) { $('#sReports').innerHTML = html; lastReportsHTML = html; }
 
   $('#sMembers').innerHTML = CONFIG.pilgrims.map((ref) => {
     const m = thisSession(S.members[ref]), rep = openReportOf(ref), d = meters(me, rep || m);
-    const badge = rep ? '<span class="badge b-alert">عليه بلاغ</span>' : isOnline(m) ? '<span class="badge b-ok">متصل</span>' : m ? `<span class="badge b-away">آخر ظهور ${ago(m.t)}</span>` : '<span class="badge b-away">لم يسجّل دخول</span>';
-    return `<div class="li"><div>${bdi(ref)}<div class="meta">${d != null ? 'يبعد عنك ' + fmtDist(d) : m && m.lat != null ? 'وصل موقعه' : 'الموقع غير معروف بعد'}</div></div>${badge}</div>`;
+    const badge = rep ? `<span class="badge b-alert">${T('عليه بلاغ')}</span>` : isOnline(m) ? `<span class="badge b-ok">${T('متصل')}</span>` : m ? `<span class="badge b-away">${T('آخر ظهور {ago}', { ago: ago(m.t) })}</span>` : `<span class="badge b-away">${T('لم يسجّل دخول')}</span>`;
+    return `<div class="li"><div>${bdi(ref)}<div class="meta">${d != null ? T('يبعد عنك {d}', { d: fmtDist(d) }) : T(m && m.lat != null ? 'وصل موقعه' : 'الموقع غير معروف بعد')}</div></div>${badge}</div>`;
   }).join('');
   $$('#sStage button').forEach((b) => b.classList.toggle('on', !!S.stage && S.stage.stage === b.dataset.s));
   if (!mapMode) setMapMode(openReports().some((r) => r.lat != null) ? 'google' : 'group');
@@ -850,7 +866,7 @@ const marks = {}, lines = {};
 async function initMap() {
   if (map) { setTimeout(() => map.invalidateSize(), 80); return; }
   loadCSS('leaflet.css');
-  try { await loadScript('leaflet.js'); } catch (e) { $('#mapMsg').textContent = 'تعذّر تحميل الخريطة'; return; }
+  try { await loadScript('leaflet.js'); } catch (e) { $('#mapMsg').textContent = T('تعذّر تحميل الخريطة'); return; }
   if (map) return;
   map = window.L.map('lmap', { zoomControl: false, attributionControl: true }).setView([21.4225, 39.8262], 16);
   window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -878,12 +894,12 @@ function renderMap() {
   if (!map || Session.role !== 'super') return;
   const L = window.L, me = supPos();
   const seen = new Set();
-  if (me) { upsertMark('sup', me, 'mk mk-sup', SHIELD, 'أنت (المشرفة)', 500); seen.add('sup'); }
+  if (me) { upsertMark('sup', me, 'mk mk-sup', SHIELD, T('أنت (المشرفة)'), 500); seen.add('sup'); }
   CONFIG.pilgrims.forEach((ref) => {
     const m = thisSession(S.members[ref]), rep = openReportOf(ref), pos = rep && rep.lat != null ? rep : m && m.lat != null ? m : null;
     if (!pos) return;
     const d = meters(me, pos);
-    const tip = (rep ? '🚨 ' + rep.type + ' — ' : '') + ref + (d != null ? ' · يبعد ' + fmtDist(d) : '');
+    const tip = (rep ? '🚨 ' + T(rep.type) + ' — ' : '') + ref + (d != null ? ' · ' + T('يبعد {d}', { d: fmtDist(d) }) : '');
     upsertMark(ref, pos, rep ? 'mk mk-rep' : 'mk mk-pil' + (isOnline(m) ? '' : ' off'), ref.slice(-3), tip, rep ? 1000 : 0);
     seen.add(ref);
   });
@@ -908,13 +924,13 @@ function renderMap() {
   const n = Object.keys(marks).length;
   const msg = $('#mapMsg');
   msg.classList.toggle('hidden', n > 0);
-  if (!n) msg.textContent = 'بانتظار المواقع… اسمح بالموقع واضغط «تحديث مواقع المجموعة»';
+  if (!n) msg.textContent = T('بانتظار المواقع… اسمح بالموقع واضغط «تحديث مواقع المجموعة»');
   if (!mapFitted && n) { fitMap(); mapFitted = true; }
 }
 function fitMap() {
   if (!map) return;
   const pts = Object.values(marks).map((m) => m.getLatLng());
-  if (!pts.length) { toast('ما فيه مواقع بعد'); return; }
+  if (!pts.length) { toast(T('ما فيه مواقع بعد')); return; }
   if (pts.length === 1) map.setView(pts[0], 18, { animate: true });
   else map.fitBounds(window.L.latLngBounds(pts), { padding: [56, 56], maxZoom: 19, animate: true });
 }
@@ -936,23 +952,23 @@ function setMapMode(mode, rid) {
 function googleTarget() {             // the chosen report, else the newest open report, else my own location
   let r = gTarget && S.reports[gTarget];
   if (!r || r.lat == null || !isOpen(r)) r = openReports().find((x) => x.lat != null) || null;
-  if (r) return { lat: r.lat, lon: r.lon, label: (r.found ? 'مكان العثور على الحاج ' : 'موقع الحاج ') + r.ref, r };
+  if (r) return { lat: r.lat, lon: r.lon, label: T(r.found ? 'مكان العثور على الحاج {ref}' : 'موقع الحاج {ref}', { ref: r.ref }), r };
   const me = supPos();
-  return me ? { lat: me.lat, lon: me.lon, label: 'موقعك الحالي (المشرفة)' } : null;
+  return me ? { lat: me.lat, lon: me.lon, label: T('موقعك الحالي (المشرفة)') } : null;
 }
 function renderGoogle(force) {
   const cap = $('#gcap'), box = $('#gmap');
   if (mapMode !== 'google') { cap.classList.remove('show'); return; }
   const t = googleTarget();
-  if (!t) { box.dataset.key = ''; box.innerHTML = '<div class="mapmsg">بانتظار المواقع… اسمح بالموقع في جوالك</div>'; cap.classList.remove('show'); return; }
-  const key = t.lat.toFixed(5) + ',' + t.lon.toFixed(5);
+  if (!t) { box.dataset.key = ''; box.innerHTML = `<div class="mapmsg">${T('بانتظار المواقع… اسمح بالموقع في جوالك')}</div>`; cap.classList.remove('show'); return; }
+  const key = I18N.lang + ':' + t.lat.toFixed(5) + ',' + t.lon.toFixed(5);
   if (force || box.dataset.key !== key) {
     box.dataset.key = key;
-    box.innerHTML = `<iframe title="خرائط جوجل" loading="lazy" src="https://maps.google.com/maps?q=${t.lat},${t.lon}&z=18&hl=ar&output=embed"></iframe>`;
+    box.innerHTML = `<iframe title="${esc(T('خرائط جوجل'))}" loading="lazy" src="https://maps.google.com/maps?q=${t.lat},${t.lon}&z=18&hl=${I18N.lang}&output=embed"></iframe>`;
   }
   const d = t.r ? meters(supPos(), t.r) : null;
-  cap.innerHTML = `<div class="t"><b>${esc(t.label)}</b>${d != null ? `<span class="badge ${t.r.found ? 'b-gold' : 'b-alert'}">يبعد عنك ${fmtDist(d)}</span>` : ''}</div>
-    <div class="links"><a class="glink" href="${gmapsSearch(t)}" target="_blank" rel="noopener">${ICON.pin}فتح في خرائط جوجل</a><a class="glink ghost" href="${directionsUrl(t)}" target="_blank" rel="noopener">${ICON.nav}الاتجاهات</a></div>`;
+  cap.innerHTML = `<div class="t"><b>${esc(t.label)}</b>${d != null ? `<span class="badge ${t.r.found ? 'b-gold' : 'b-alert'}">${T('يبعد عنك {d}', { d: fmtDist(d) })}</span>` : ''}</div>
+    <div class="links"><a class="glink" href="${gmapsSearch(t)}" target="_blank" rel="noopener">${ICON.pin}${T('فتح في خرائط جوجل')}</a><a class="glink ghost" href="${directionsUrl(t)}" target="_blank" rel="noopener">${ICON.nav}${T('الاتجاهات')}</a></div>`;
   cap.classList.add('show');
 }
 
@@ -960,12 +976,12 @@ function renderGoogle(force) {
 function renderHome() {
   const st = S.stage ? S.stage.stage : null;
   const idx = st ? CONFIG.stages.indexOf(st) : 1;
-  $('#nowText').textContent = st ? 'وجهة المجموعة الآن: ' + st : 'الآن: يوم التروية · منى';
+  $('#nowText').textContent = st ? T('وجهة المجموعة الآن: {s}', { s: T(st) }) : T('الآن: يوم التروية · منى');
   $$('#routeSteps .step').forEach((s) => {
     const i = +s.dataset.i;
     s.classList.toggle('done', i < idx); s.classList.toggle('cur', i === idx);
   });
-  $('#routeNote').textContent = st ? 'حددتها المشرفة ' + ago(S.stage.t) : 'وجهة المجموعة يحددها المشرف';
+  $('#routeNote').textContent = st ? T('حددتها المشرفة {ago}', { ago: ago(S.stage.t) }) : T('وجهة المجموعة يحددها المشرف');
   routeIdx = idx;
 }
 let routeIdx = 1;
@@ -1005,11 +1021,12 @@ function initK3D() {
 }
 function updateK3dActive() { if (k3d) k3d.setActive(!document.hidden && (k3dFullOpen || (current === 'home' && heroVisible))); }
 function openK3dFull() {
-  if (!k3d) { toast('العرض ثلاثي الأبعاد غير مدعوم في هذا المتصفح'); return; }
+  if (!k3d) { toast(T('العرض ثلاثي الأبعاد غير مدعوم في هذا المتصفح')); return; }
   k3dFullOpen = true;
   $('#k3dFull').classList.add('show');
   k3d.moveTo($('#k3dStage'), 'full');
   k3d.setLabels($('#k3dLabels'));
+  I18N.apply($('#k3dLabels'));
   updateK3dActive();
   history.pushState({ k3d: 1 }, '');
 }
@@ -1026,7 +1043,7 @@ function closeK3dFull(fromPop) {
 function toggleTawaf() {
   if (!k3d) return;
   k3d.setTawaf(!k3d.tawaf);
-  $('#tawafBtn span').textContent = k3d.tawaf ? 'إيقاف الطواف' : 'تشغيل الطواف';
+  $('#tawafBtn span').textContent = T(k3d.tawaf ? 'إيقاف الطواف' : 'تشغيل الطواف');
 }
 
 /* ===================== install + share ===================== */
@@ -1041,11 +1058,11 @@ async function installApp() {
     try { const r = await deferredPrompt.userChoice; if (r.outcome === 'accepted') $('#installCard').classList.add('hidden'); } catch (e) { /* ignore */ }
     deferredPrompt = null;
   } else if (isIOS()) show('iosSheet');
-  else toast('من قائمة المتصفح اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية»', 4000);
+  else toast(T('من قائمة المتصفح اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية»'), 4000);
 }
 const appUrl = () => location.href.split('#')[0].split('?')[0].replace(/index\.html$/, '');
 async function openShare() {
-  try { await loadScript('qrcode.js'); } catch (e) { toast('تعذّر إنشاء الرمز'); return; }
+  try { await loadScript('qrcode.js'); } catch (e) { toast(T('تعذّر إنشاء الرمز')); return; }
   const url = appUrl();
   const qr = window.qrcode(0, 'M'); qr.addData(url); qr.make();
   $('#shareQR').innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
@@ -1053,10 +1070,10 @@ async function openShare() {
   show('shareSheet');
 }
 async function copyLink() {
-  try { await navigator.clipboard.writeText(appUrl()); toast('تم نسخ الرابط ✓'); } catch (e) { toast(appUrl(), 5000); }
+  try { await navigator.clipboard.writeText(appUrl()); toast(T('تم نسخ الرابط ✓')); } catch (e) { toast(appUrl(), 5000); }
 }
 async function nativeShare() {
-  if (navigator.share) { try { await navigator.share({ title: 'درب الحاج', text: 'تطبيق درب الحاج', url: appUrl() }); } catch (e) { /* cancelled */ } }
+  if (navigator.share) { try { await navigator.share({ title: T('درب الحاج'), text: T('تطبيق درب الحاج'), url: appUrl() }); } catch (e) { /* cancelled */ } }
   else copyLink();
 }
 
@@ -1128,11 +1145,11 @@ function openExternal(url) {
 }
 function withFreshLocation(cb) {                 // use a recent fix right away, otherwise ask for one (max ~10 s)
   if (Geo.last && Date.now() - (Geo.lastAt || 0) < 120000) { cb(Geo.last); return; }
-  toast('جارٍ تحديد موقعك…');
+  toast(T('جارٍ تحديد موقعك…'));
   Geo.get(10000).then(cb).catch(() => cb(null));
 }
 function whatsappHelp() {
-  if (!waNumber()) { toast('رقم الواتساب غير مضاف بعد — ارفع بلاغ وبيوصل للمشرفة فورًا', 3800); return; }
+  if (!waNumber()) { toast(T('رقم الواتساب غير مضاف بعد — ارفع بلاغ وبيوصل للمشرفة فورًا'), 3800); return; }
   const r = myOpenReport();
   withFreshLocation((p) => {
     const text = `السلام عليكم، أنا الحاج صاحب الرقم المرجعي ${Session.ref} من ${CONFIG.groupName} (${CONFIG.group}).`
@@ -1154,18 +1171,18 @@ function currentStop() {
 }
 function renderPlaces() {
   const now = currentStop(), me = Geo.last, cur = CONFIG.schedule[now];
-  $('#plNowTitle').textContent = 'الآن: ' + (cur.tag ? cur.tag + ' · ' : '') + cur.name;
-  $('#plNowSub').textContent = S.stage ? 'حددتها المشرفة ' + ago(S.stage.t) : 'المرحلة الحالية يحددها المشرف من لوحته';
+  $('#plNowTitle').textContent = T('الآن: {x}', { x: (cur.tag ? T(cur.tag) + ' · ' : '') + T(cur.name) });
+  $('#plNowSub').textContent = S.stage ? T('حددتها المشرفة {ago}', { ago: ago(S.stage.t) }) : T('المرحلة الحالية يحددها المشرف من لوحته');
   $('#plList').innerHTML = CONFIG.schedule.map((x, i) => {
     const cls = i < now ? 'st-done' : i === now ? 'st-now' : '';
     const d = meters(me, x);
-    const badges = (i === now ? '<span class="badge b-ok">المجموعة هنا الآن</span>' : i < now ? '<span class="badge b-gold">تم</span>' : '')
-      + (d != null ? `<span class="badge b-away">يبعد عنك ${fmtDist(d)}</span>` : '');
+    const badges = (i === now ? `<span class="badge b-ok">${T('المجموعة هنا الآن')}</span>` : i < now ? `<span class="badge b-gold">${T('تم')}</span>` : '')
+      + (d != null ? `<span class="badge b-away">${T('يبعد عنك {d}', { d: fmtDist(d) })}</span>` : '');
     return `<div class="stop ${cls}"><div class="rail"><i class="d"></i><i class="l"></i></div><div class="body">
-      <div class="when"><b>${x.day}</b><span>· ${x.time}</span>${x.tag ? `<span class="tag">${x.tag}</span>` : ''}</div>
-      <div class="name">${x.name}</div><div class="note">${x.note}</div>
+      <div class="when"><b>${T(x.day)}</b><span>· ${T(x.time)}</span>${x.tag ? `<span class="tag">${T(x.tag)}</span>` : ''}</div>
+      <div class="name">${T(x.name)}</div><div class="note">${T(x.note)}</div>
       ${badges ? `<div class="meta">${badges}</div>` : ''}
-      <div class="links"><a class="glink" href="${gmapsSearch(x)}" target="_blank" rel="noopener">${ICON.pin}خرائط جوجل</a><a class="glink ghost" href="${gmapsDir(x)}" target="_blank" rel="noopener">${ICON.nav}الاتجاهات</a></div>
+      <div class="links"><a class="glink" href="${gmapsSearch(x)}" target="_blank" rel="noopener">${ICON.pin}${T('خرائط جوجل')}</a><a class="glink ghost" href="${gmapsDir(x)}" target="_blank" rel="noopener">${ICON.nav}${T('الاتجاهات')}</a></div>
     </div></div>`;
   }).join('');
 }
@@ -1190,21 +1207,21 @@ function renderMyLoc(state) {
   mlState = state;
   const st = $('#mlStatus'), body = $('#mlBody'), btn = $('#mlBtn');
   btn.disabled = state === 'loading';
-  btn.textContent = state === 'ok' ? 'تحديث' : state === 'loading' ? 'لحظة…' : 'تحديد موقعي';
+  btn.textContent = T(state === 'ok' ? 'تحديث' : state === 'loading' ? 'لحظة…' : 'تحديد موقعي');
   if (state === 'ok') {
     const p = Geo.last;
-    st.textContent = p.acc > 500 ? `موقعك تقريبي (±${fmtDist(p.acc)}) — فعّل «الموقع الدقيق» لدقة أعلى` : `تم تحديد موقعك ✓ بدقة ±${fmtDist(p.acc)}`;
-    const key = p.lat + ',' + p.lon;
+    st.textContent = p.acc > 500 ? T('موقعك تقريبي (±{d}) — فعّل «الموقع الدقيق» لدقة أعلى', { d: fmtDist(p.acc) }) : T('تم تحديد موقعك ✓ بدقة ±{d}', { d: fmtDist(p.acc) });
+    const key = I18N.lang + ':' + p.lat + ',' + p.lon;
     if (body.dataset.key !== key) {
       body.dataset.key = key;
-      body.innerHTML = `<div class="mlmap"><iframe loading="lazy" title="موقعي على خرائط جوجل" src="https://maps.google.com/maps?q=${p.lat},${p.lon}&z=16&hl=ar&output=embed"></iframe></div>
-        <div class="coords"><span>الإحداثيات</span><bdi>${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</bdi></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px"><a class="glink" href="${gmapsSearch(p)}" target="_blank" rel="noopener">${ICON.pin}خرائط جوجل</a><button class="glink ghost" onclick="shareLocationLink()">${ICON.nav}مشاركة موقعي</button></div>`;
+      body.innerHTML = `<div class="mlmap"><iframe loading="lazy" title="${esc(T('موقعي على خرائط جوجل'))}" src="https://maps.google.com/maps?q=${p.lat},${p.lon}&z=16&hl=${I18N.lang}&output=embed"></iframe></div>
+        <div class="coords"><span>${T('الإحداثيات')}</span><bdi>${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</bdi></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px"><a class="glink" href="${gmapsSearch(p)}" target="_blank" rel="noopener">${ICON.pin}${T('خرائط جوجل')}</a><button class="glink ghost" onclick="shareLocationLink()">${ICON.nav}${T('مشاركة موقعي')}</button></div>`;
     }
     return;
   }
   body.dataset.key = '';
-  st.textContent = {
+  st.textContent = T({
     idle: 'اضغط «تحديد موقعي» واسمح بالوصول للموقع',
     loading: 'جارٍ تحديد موقعك… (قد يأخذ ثواني)',
     denied: 'الوصول للموقع مقفول — فعّله بالخطوات التالية',
@@ -1212,63 +1229,74 @@ function renderMyLoc(state) {
     fail: 'تعذّر تحديد الموقع',
     insecure: 'الموقع يشتغل فقط من رابط التطبيق (https)',
     unsupported: 'المتصفح لا يدعم تحديد الموقع',
-  }[state];
+  }[state]);
   body.innerHTML = state === 'loading' || state === 'idle' ? '' : geoHelp(state);
 }
+// help blocks are translated as whole pieces (they contain <b> tags)
+const GEO_HELP = {
+  insecure: 'افتح التطبيق من رابطه على الإنترنت (يبدأ بـ https مثل رابط Netlify). الموقع والكاميرا ما يشتغلون إذا انفتح الملف مباشرة من الجهاز.',
+  ios: '<li>افتح <b>الإعدادات</b> ← <b>الخصوصية والأمان</b> ← <b>خدمات الموقع</b> وتأكد إنها شغّالة.</li><li>في نفس الصفحة اختر <b>مواقع Safari</b> ← <b>أثناء الاستخدام</b>، وفعّل <b>الموقع الدقيق</b>.</li><li>في Safari اضغط <b>ᴀA</b> بجانب الرابط ← <b>إعدادات موقع الويب</b> ← <b>الموقع: سماح</b>.</li><li>ارجع هنا واضغط «تحديد موقعي».</li>',
+  other: '<li>اضغط 🔒 أو ⓘ بجانب الرابط فوق.</li><li>اختر <b>الأذونات</b> ← <b>الموقع</b> ← <b>سماح</b>.</li><li>تأكد إن <b>الموقع (GPS)</b> شغّال من الشريط العلوي للجوال.</li><li>ارجع هنا واضغط «تحديد موقعي».</li>',
+  fail: 'تأكد إن الموقع (GPS) شغّال في الجوال، وجرّب قرب نافذة أو خارج المبنى، ثم اضغط «تحديد موقعي» مرة ثانية.',
+  browser: 'استخدم Safari في الآيفون والآيباد، أو Chrome في الأندرويد.',
+};
 function geoHelp(state) {
-  if (state === 'insecure') return '<div class="help">افتح التطبيق من رابطه على الإنترنت (يبدأ بـ https مثل رابط Netlify). الموقع والكاميرا ما يشتغلون إذا انفتح الملف مباشرة من الجهاز.</div>';
-  if (state === 'denied') {
-    return isIOS()
-      ? '<ol class="help"><li>افتح <b>الإعدادات</b> ← <b>الخصوصية والأمان</b> ← <b>خدمات الموقع</b> وتأكد إنها شغّالة.</li><li>في نفس الصفحة اختر <b>مواقع Safari</b> ← <b>أثناء الاستخدام</b>، وفعّل <b>الموقع الدقيق</b>.</li><li>في Safari اضغط <b>ᴀA</b> بجانب الرابط ← <b>إعدادات موقع الويب</b> ← <b>الموقع: سماح</b>.</li><li>ارجع هنا واضغط «تحديد موقعي».</li></ol>'
-      : '<ol class="help"><li>اضغط 🔒 أو ⓘ بجانب الرابط فوق.</li><li>اختر <b>الأذونات</b> ← <b>الموقع</b> ← <b>سماح</b>.</li><li>تأكد إن <b>الموقع (GPS)</b> شغّال من الشريط العلوي للجوال.</li><li>ارجع هنا واضغط «تحديد موقعي».</li></ol>';
-  }
-  if (state === 'timeout' || state === 'fail') return '<div class="help">تأكد إن الموقع (GPS) شغّال في الجوال، وجرّب قرب نافذة أو خارج المبنى، ثم اضغط «تحديد موقعي» مرة ثانية.</div>';
-  return '<div class="help">استخدم Safari في الآيفون والآيباد، أو Chrome في الأندرويد.</div>';
+  if (state === 'insecure') return `<div class="help">${T(GEO_HELP.insecure)}</div>`;
+  if (state === 'denied') return `<ol class="help">${T(isIOS() ? GEO_HELP.ios : GEO_HELP.other)}</ol>`;
+  if (state === 'timeout' || state === 'fail') return `<div class="help">${T(GEO_HELP.fail)}</div>`;
+  return `<div class="help">${T(GEO_HELP.browser)}</div>`;
 }
 async function shareLocationLink() {
   const p = Geo.last; if (!p) return;
   const url = gmapsSearch(p);
-  if (navigator.share) { try { await navigator.share({ title: 'موقعي — درب الحاج', url }); return; } catch (e) { return; } }
-  openExternal('https://wa.me/?text=' + encodeURIComponent('موقعي الحالي: ' + url));
+  if (navigator.share) { try { await navigator.share({ title: T('موقعي — درب الحاج'), url }); return; } catch (e) { return; } }
+  openExternal('https://wa.me/?text=' + encodeURIComponent(T('موقعي الحالي: {url}', { url })));
 }
 function enableLocation() {
   if (!window.isSecureContext) { go('places'); setTimeout(() => renderMyLoc('insecure'), 450); return; }
   Geo.get(0).then((p) => {
-    toast('📍 تم تفعيل الموقع');
+    toast(T('📍 تم تفعيل الموقع'));
     if (Session.role === 'pilgrim') Relay.publish(Object.assign({ k: 'loc' }, p));
   }).catch((e) => { go('places'); setTimeout(() => renderMyLoc(e && e.code === 1 ? 'denied' : 'fail'), 450); });
 }
 
 /* ===================== scan tab: anyone who finds a lost pilgrim ===================== */
 function scanFinder() { Scanner.start($('#fScanner'), (code) => finderLookup(code)); }
+let lastFinder = null;                          // last result card, redrawn when the language changes
 function finderLookup(raw) {
-  const ref = normRef(raw), box = $('#fResult');
+  const ref = normRef(raw);
+  lastFinder = ref;
+  if (CONFIG.pilgrims.includes(ref)) $('#fRef').value = '';
+  renderFinder(ref, true);
+}
+function renderFinder(ref, fx) {
+  const box = $('#fResult'), flip = fx ? ' flip' : '';
   if (isSupRef(ref)) {
-    box.innerHTML = `<div class="card flip fres"><div class="head"><b>بطاقة المشرفة</b>${bdi(ref)}</div>
-      <div class="kv"><span>المشرفة</span><b>${esc(CONFIG.supervisor.name)}</b></div>
-      <div class="kv"><span>المجموعة</span>${bdi(CONFIG.group)}</div>
-      <div class="acts"><button class="btn green full" onclick="loginFromScan('super','${ref}')">دخول كمشرفة</button></div></div>`;
-    haptic(40); return;
-  }
-  if (!CONFIG.pilgrims.includes(ref)) {
-    shake('#fRef'); haptic([100, 50, 100]);
-    box.innerHTML = '<div class="card shake" style="text-align:center"><b style="color:var(--red)">رمز غير معروف</b><div class="sub" style="margin:6px 0 0">تأكد من السوار وأعد المسح</div></div>';
+    box.innerHTML = `<div class="card${flip} fres"><div class="head"><b>${T('بطاقة المشرفة')}</b>${bdi(ref)}</div>
+      <div class="kv"><span>${T('المشرفة')}</span><b>${esc(CONFIG.supervisor.name)}</b></div>
+      <div class="kv"><span>${T('المجموعة')}</span>${bdi(CONFIG.group)}</div>
+      <div class="acts"><button class="btn green full" onclick="loginFromScan('super','${ref}')">${T('دخول كمشرفة')}</button></div></div>`;
+    if (fx) haptic(40);
     return;
   }
-  $('#fRef').value = '';
+  if (!CONFIG.pilgrims.includes(ref)) {
+    if (fx) { shake('#fRef'); haptic([100, 50, 100]); }
+    box.innerHTML = `<div class="card${fx ? ' shake' : ''}" style="text-align:center"><b style="color:var(--red)">${T('رمز غير معروف')}</b><div class="sub" style="margin:6px 0 0">${T('تأكد من السوار وأعد المسح')}</div></div>`;
+    return;
+  }
   const rep = openReportOf(ref);
-  box.innerHTML = `<div class="card flip fres">
-    <div class="head"><b>تم التعرّف على الحاج</b><span class="badge b-ok">مسجّل في درب الحاج</span></div>
-    <div class="kv"><span>الرقم المرجعي</span>${bdi(ref)}</div>
-    <div class="kv"><span>المجموعة</span>${bdi(CONFIG.group)}</div>
-    <div class="kv"><span>المشرفة المسؤولة</span><b>${esc(CONFIG.supervisor.name)}</b></div>
-    ${rep ? '<div class="kv"><span>الحالة</span><span class="badge b-alert">عليه بلاغ — المشرفة تبحث عنه</span></div>' : ''}
+  box.innerHTML = `<div class="card${flip} fres">
+    <div class="head"><b>${T('تم التعرّف على الحاج')}</b><span class="badge b-ok">${T('مسجّل في درب الحاج')}</span></div>
+    <div class="kv"><span>${T('الرقم المرجعي')}</span>${bdi(ref)}</div>
+    <div class="kv"><span>${T('المجموعة')}</span>${bdi(CONFIG.group)}</div>
+    <div class="kv"><span>${T('المشرفة المسؤولة')}</span><b>${esc(CONFIG.supervisor.name)}</b></div>
+    ${rep ? `<div class="kv"><span>${T('الحالة')}</span><span class="badge b-alert">${T('عليه بلاغ — المشرفة تبحث عنه')}</span></div>` : ''}
     <div class="acts">
-      <button class="btn red full" onclick="reportFound('${ref}')">أبلغ المشرفة بمكانه الآن</button>
-      ${waNumber() ? `<button class="btn wa" onclick="whatsappFound('${ref}')">${ICON.wa}واتساب</button><button class="btn green" onclick="callSupervisor()">${ICON.phone}اتصال</button>` : ''}
-      ${Session.role === 'pilgrim' && Session.ref === ref ? '' : `<button class="btn ghost full" onclick="loginFromScan('pilgrim','${ref}')">هذا سواري — دخول كحاج</button>`}
+      <button class="btn red full" onclick="reportFound('${ref}')">${T('أبلغ المشرفة بمكانه الآن')}</button>
+      ${waNumber() ? `<button class="btn wa" onclick="whatsappFound('${ref}')">${ICON.wa}${T('واتساب')}</button><button class="btn green" onclick="callSupervisor()">${ICON.phone}${T('اتصال')}</button>` : ''}
+      ${Session.role === 'pilgrim' && Session.ref === ref ? '' : `<button class="btn ghost full" onclick="loginFromScan('pilgrim','${ref}')">${T('هذا سواري — دخول كحاج')}</button>`}
     </div></div>`;
-  haptic(40);
+  if (fx) haptic(40);
 }
 function loginFromScan(role, ref) {
   go(role);
@@ -1278,7 +1306,7 @@ function reportFound(ref) {
   withFreshLocation((p) => {
     Relay.publish(Object.assign({ k: 'found', rid: uid(), ref }, p || {}));
     publishAlert('found', ref, null, p);
-    showSuccess('تم إبلاغ المشرفة', p ? 'وصلها مكان الحاج الآن — خلك معه إذا تقدر' : 'وصل البلاغ — الموقع غير متاح، خلك مع الحاج');
+    showSuccess(T('تم إبلاغ المشرفة'), T(p ? 'وصلها مكان الحاج الآن — خلك معه إذا تقدر' : 'وصل البلاغ — الموقع غير متاح، خلك مع الحاج'));
     haptic([60, 40, 60]);
   });
 }
@@ -1293,17 +1321,17 @@ $('#fRef').addEventListener('keydown', (e) => { if (e.key === 'Enter') finderLoo
 /* ===================== team & contact ===================== */
 function renderContact() {
   $('#teamList').innerHTML = CONFIG.team.map((m) => `<div class="member"><div class="m-av ${m.c}">${m.av}</div><div>
-    <div class="m-name">${esc(m.name)}<span class="m-role">${esc(m.role)}</span></div><div class="m-did">${esc(m.did)}</div></div></div>`).join('');
+    <div class="m-name">${esc(m.name)}<span class="m-role">${esc(T(m.role))}</span></div><div class="m-did">${esc(T(m.did))}</div></div></div>`).join('');
   const row = (cls, icon, label, value, href) => `<a class="crow" href="${href}"${href.startsWith('http') ? ' target="_blank" rel="noopener"' : ''}>
     <div class="c-ic ${cls}">${icon}</div><div><div class="c-lab">${label}</div><div class="c-val">${esc(value)}</div></div><span class="go">${ICON.chev}</span></a>`;
   const ph = CONFIG.contact.phone, rows = [];
   if (ph) {
-    rows.push(row('wa', ICON.wa, 'واتساب', ph, waLink('السلام عليكم، أتواصل معكم بخصوص تطبيق درب الحاج.', intlNumber(ph))));
-    rows.push(row('ph', ICON.phone, 'اتصال', ph, 'tel:' + ph));
+    rows.push(row('wa', ICON.wa, T('واتساب'), ph, waLink('السلام عليكم، أتواصل معكم بخصوص تطبيق درب الحاج.', intlNumber(ph))));
+    rows.push(row('ph', ICON.phone, T('اتصال'), ph, 'tel:' + ph));
   }
-  rows.push(row('em', ICON.mail, 'البريد الإلكتروني', CONFIG.contact.email, `mailto:${CONFIG.contact.email}?subject=${encodeURIComponent('تطبيق درب الحاج')}`));
+  rows.push(row('em', ICON.mail, T('البريد الإلكتروني'), CONFIG.contact.email, `mailto:${CONFIG.contact.email}?subject=${encodeURIComponent('تطبيق درب الحاج')}`));
   $('#contactList').innerHTML = rows.join('');
-  $('#emgGrid').innerHTML = CONFIG.emergency.map((e) => `<a class="emg" href="tel:${e.n}"><b>${e.n}</b><span>${e.t}</span></a>`).join('');
+  $('#emgGrid').innerHTML = CONFIG.emergency.map((e) => `<a class="emg" href="tel:${e.n}"><b>${e.n}</b><span>${esc(T(e.t))}</span></a>`).join('');
 }
 
 
@@ -1367,17 +1395,17 @@ const Push = {
 };
 let pushTestAt = 0, pushTestOk = false;
 async function enableAlerts() {
-  const btn = $('#nEnable'); if (btn) { btn.disabled = true; btn.textContent = 'لحظة…'; }
+  const btn = $('#nEnable'); if (btn) { btn.disabled = true; btn.textContent = T('لحظة…'); }
   try {
     await Push.enable();
-    toast('🔔 تم تفعيل التنبيهات — جربي «تنبيه تجريبي»', 3500);
+    toast(T('🔔 تم تفعيل التنبيهات — جربي «تنبيه تجريبي»'), 3500);
   } catch (e) {
     const m = e && e.message;
     if (m === 'install') show('iosSheet');
-    toast(m === 'install' ? 'ثبّتي التطبيق على الشاشة الرئيسية وافتحيه من الأيقونة، بعدين فعّلي التنبيهات'
+    toast(T(m === 'install' ? 'ثبّتي التطبيق على الشاشة الرئيسية وافتحيه من الأيقونة، بعدين فعّلي التنبيهات'
       : m === 'denied' ? 'التنبيهات مرفوضة — فعّليها من الإعدادات ← الإشعارات ← درب الحاج'
       : m === 'unsupported' ? 'هذا المتصفح ما يدعم التنبيهات — استخدمي تطبيق ntfy (الطريقة المضمونة)'
-      : 'ما قدرت أفعّلها هنا — استخدمي تطبيق ntfy (الطريقة المضمونة)', 4500);
+      : 'ما قدرت أفعّلها هنا — استخدمي تطبيق ntfy (الطريقة المضمونة)'), 4500);
   }
   notifSig = '';
   renderNotif();
@@ -1385,34 +1413,34 @@ async function enableAlerts() {
 function testAlert() {
   pushTestAt = Date.now(); pushTestOk = false;
   publishAlert('test');
-  toast('أرسلت تنبيه تجريبي 🔔 يوصلك خلال ثواني', 3500);
-  setTimeout(() => { if (!pushTestOk && Date.now() - pushTestAt >= 24000 && Push.isOn()) toast('ما وصل؟ استخدمي تطبيق ntfy (الطريقة المضمونة) تحت', 4500); }, 25000);
+  toast(T('أرسلت تنبيه تجريبي 🔔 يوصلك خلال ثواني'), 3500);
+  setTimeout(() => { if (!pushTestOk && Date.now() - pushTestAt >= 24000 && Push.isOn()) toast(T('ما وصل؟ استخدمي تطبيق ntfy (الطريقة المضمونة) تحت'), 4500); }, 25000);
 }
 async function copyTopic() {
-  try { await navigator.clipboard.writeText(CONFIG.alertTopic); toast('تم نسخ اسم القناة ✓'); } catch (e) { toast(CONFIG.alertTopic, 6000); }
+  try { await navigator.clipboard.writeText(CONFIG.alertTopic); toast(T('تم نسخ اسم القناة ✓')); } catch (e) { toast(CONFIG.alertTopic, 6000); }
 }
 let notifSig = '';
 function renderNotif() {
   const box = $('#sNotif'); if (!box) return;
   const on = Push.isOn(), needInstall = isIOS() && !isStandalone();
-  const sig = [on, needInstall, Push.supported()].join();
+  const sig = [on, needInstall, Push.supported(), I18N.lang].join();
   if (sig === notifSig) return;
   notifSig = sig;
   box.classList.toggle('ok', on);
   const bell = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>';
   const head = on
-    ? `<div class="nh"><div class="nic">${bell}</div><div class="nt"><b>التنبيهات مفعّلة ✓</b><small>أي بلاغ يوصلك بنغمة حتى لو الجوال مقفل أو التطبيق مسكّر.</small></div></div>`
-    : `<div class="nh"><div class="nic">${bell}</div><div class="nt"><b>تنبيه البلاغات والجوال مقفل</b><small>${needInstall ? 'أول شي: ثبّتي التطبيق على الشاشة الرئيسية وافتحيه من الأيقونة، بعدين فعّلي التنبيهات.' : 'فعّليها مرة وحدة، وبعدها أي بلاغ يرن عندك حتى لو التطبيق مسكّر.'}</small></div></div>`;
+    ? `<div class="nh"><div class="nic">${bell}</div><div class="nt"><b>${T('التنبيهات مفعّلة ✓')}</b><small>${T('أي بلاغ يوصلك بنغمة حتى لو الجوال مقفل أو التطبيق مسكّر.')}</small></div></div>`
+    : `<div class="nh"><div class="nic">${bell}</div><div class="nt"><b>${T('تنبيه البلاغات والجوال مقفل')}</b><small>${T(needInstall ? 'أول شي: ثبّتي التطبيق على الشاشة الرئيسية وافتحيه من الأيقونة، بعدين فعّلي التنبيهات.' : 'فعّليها مرة وحدة، وبعدها أي بلاغ يرن عندك حتى لو التطبيق مسكّر.')}</small></div></div>`;
   const acts = on
-    ? '<div class="acts"><button class="btn gold" onclick="testAlert()">تنبيه تجريبي</button><button class="btn ghost" id="nEnable" onclick="enableAlerts()">إعادة التفعيل</button></div>'
+    ? `<div class="acts"><button class="btn gold" onclick="testAlert()">${T('تنبيه تجريبي')}</button><button class="btn ghost" id="nEnable" onclick="enableAlerts()">${T('إعادة التفعيل')}</button></div>`
     : needInstall
-      ? `<div class="acts"><button class="btn gold full" onclick="show('iosSheet')">طريقة التثبيت</button></div>`
-      : '<div class="acts"><button class="btn red full" id="nEnable" onclick="enableAlerts()">تفعيل التنبيهات</button></div>';
-  const ntfy = `<details><summary>الطريقة المضمونة: تطبيق ntfy المجاني</summary>
-    <ol class="help" style="margin-top:8px"><li>نزّلي تطبيق <b>ntfy</b> من App Store أو Google Play.</li><li>اضغطي <b>+</b> وحطي اسم القناة هذا (السيرفر ntfy.sh):</li></ol>
-    <div class="topic"><code>${CONFIG.alertTopic}</code><button class="btn gold" onclick="copyTopic()">نسخ</button></div>
-    <div class="sub" style="margin:8px 0 10px;font-size:12.5px">خلّي إشعارات ntfy مسموحة. أي بلاغ يرن عندك، ولما تضغطين عليه يفتح لوحة المشرفة.</div>
-    <button class="btn ghost sm" onclick="testAlert()">إرسال تنبيه تجريبي</button></details>`;
+      ? `<div class="acts"><button class="btn gold full" onclick="show('iosSheet')">${T('طريقة التثبيت')}</button></div>`
+      : `<div class="acts"><button class="btn red full" id="nEnable" onclick="enableAlerts()">${T('تفعيل التنبيهات')}</button></div>`;
+  const ntfy = `<details><summary>${T('الطريقة المضمونة: تطبيق ntfy المجاني')}</summary>
+    <ol class="help" style="margin-top:8px"><li>${T('نزّلي تطبيق <b>ntfy</b> من App Store أو Google Play.')}</li><li>${T('اضغطي <b>+</b> وحطي اسم القناة هذا (السيرفر ntfy.sh):')}</li></ol>
+    <div class="topic"><code>${CONFIG.alertTopic}</code><button class="btn gold" onclick="copyTopic()">${T('نسخ')}</button></div>
+    <div class="sub" style="margin:8px 0 10px;font-size:12.5px">${T('خلّي إشعارات ntfy مسموحة. أي بلاغ يرن عندك، ولما تضغطين عليه يفتح لوحة المشرفة.')}</div>
+    <button class="btn ghost sm" onclick="testAlert()">${T('إرسال تنبيه تجريبي')}</button></details>`;
   box.innerHTML = head + acts + ntfy;
 }
 
@@ -1423,11 +1451,49 @@ function openFromNotification() {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', (e) => {
     const d = e.data || {};
-    if (d.type === 'push') { pushTestOk = true; if (Date.now() - pushTestAt < 60000) toast('✓ وصل التنبيه التجريبي — التنبيهات شغّالة', 3500); }
+    if (d.type === 'push') { pushTestOk = true; if (Date.now() - pushTestAt < 60000) toast(T('✓ وصل التنبيه التجريبي — التنبيهات شغّالة'), 3500); }
     if (d.type === 'open') openFromNotification();
   });
 }
 window.addEventListener('hashchange', () => { if (location.hash === '#super') openFromNotification(); });
+
+/* ===================== language picker ===================== */
+const TICK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>';
+function openLang() {
+  $('#langList').innerHTML = I18N.langs.map((l) => {
+    const here = T(l.ar);                                         // the language's name in the current language
+    return `<button class="lang-opt${l.code === I18N.lang ? ' on' : ''}" onclick="pickLang('${l.code}')">
+      <b lang="${l.code}" dir="${l.dir}" style="font-family:${l.label}">${l.name}</b>${here !== l.name ? `<span>${esc(here)}</span>` : ''}<i class="tick">${TICK}</i></button>`;
+  }).join('');
+  show('langSheet');
+}
+function pickLang(code) {
+  closeSheets();
+  if (code === I18N.lang) return;
+  setTimeout(() => {
+    const app = $('#app');
+    app.animate && app.animate([{ opacity: 1 }, { opacity: 0.35 }, { opacity: 1 }], { duration: 420, easing: 'ease-out' });
+    setTimeout(() => I18N.set(code), 140);
+  }, 260);
+}
+// everything drawn by app.js is redrawn in the new language (static text is handled by i18n.js)
+document.addEventListener('langchange', () => {
+  updatePill();
+  $('#pageName').textContent = T(PAGE_NAMES[current] || '');
+  if (k3d) $('#tawafBtn span').textContent = T(k3d.tawaf ? 'إيقاف الطواف' : 'تشغيل الطواف');
+  renderContact();
+  renderPlaces();
+  renderMyLoc(mlState === 'ok' && !Geo.last ? 'idle' : mlState);
+  if (lastFinder && $('#fResult').innerHTML) renderFinder(lastFinder, false);
+  if ($('#reportSheet').classList.contains('show')) { renderReportFor(); setLocRow(locRow[0], locRow[1]); }
+  if ($('#alarm').classList.contains('show') && S.reports[alarmRid]) fillAlarm(S.reports[alarmRid]);
+  renderConn();
+  lastReportsHTML = ''; notifSig = '';
+  if (Session.role === 'super') renderGoogle(true);
+  scheduleRender();
+  if (current === 'home') runRoute();
+  if (map) setTimeout(() => map.invalidateSize(), 60);
+});
 
 /* ===================== start ===================== */
 (function boot() {

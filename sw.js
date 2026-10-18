@@ -1,10 +1,10 @@
 /* درب الحاج — service worker.
    • App code is fetched fresh when online (updates show up right away); 3D, map, fonts and icons come from the cache.
    • Shows "new report" notifications on the supervisor's phone even when the app is closed (Web Push via ntfy.sh). */
-const CACHE = 'darb-alhajj-v5';
+const CACHE = 'darb-alhajj-v6';
 const LIBS = ['three.module.min.js', 'OrbitControls.js', 'RoomEnvironment.js', 'jsQR.js', 'qrcode.js', 'leaflet.js', 'leaflet.css'];
 const SHELL = [
-  './', 'index.html', 'app.js?v=5', 'kaaba3d.js?v=5', 'manifest.json', ...LIBS,
+  './', 'index.html', 'i18n.js?v=6', 'app.js?v=6', 'kaaba3d.js?v=5', 'manifest.json', ...LIBS,
   'Tajawal-Regular.ttf', 'Tajawal-Medium.ttf', 'Tajawal-Bold.ttf', 'Tajawal-ExtraBold.ttf',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',
 ];
