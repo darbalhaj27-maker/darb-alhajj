@@ -630,6 +630,12 @@
     '✓ وصل التنبيه التجريبي — التنبيهات شغّالة': ['✓ Test alert received — alerts are working', '✓ ٹیسٹ الرٹ موصول — الرٹس کام کر رہے ہیں', '✓ Uji notifikasi diterima — notifikasi berfungsi', '✓ Test bildirimi geldi — bildirimler çalışıyor', '✓ Alerte test reçue — les alertes fonctionnent', '✓ টেস্ট নোটিফিকেশন এসেছে — নোটিফিকেশন কাজ করছে', '✓ اعلان آزمایشی رسید — اعلان‌ها کار می‌کنند', '✓ Uji pemberitahuan diterima — pemberitahuan berfungsi', '✓ Тестовое уведомление пришло — всё работает'],
   });
 
+  /* ===== live translation of the supervisor's own words ===== */
+  add({
+    'مترجم تلقائيًا': ['auto-translated', 'خودکار ترجمہ', 'diterjemahkan otomatis', 'otomatik çeviri', 'traduit automatiquement', 'স্বয়ংক্রিয় অনুবাদ', 'ترجمه خودکار', 'terjemahan automatik', 'автоперевод'],
+    '🌐 أي تنبيه تكتبينه يوصل لكل حاج مترجم للغته': ['🌐 Anything you write reaches each pilgrim translated into their language', '🌐 آپ جو بھی اعلان لکھیں، ہر حاجی کو اس کی زبان میں ترجمہ ہو کر پہنچے گا', '🌐 Apa pun yang Anda tulis sampai ke setiap jemaah dalam bahasanya', '🌐 Yazdığınız her duyuru her hacıya kendi diline çevrilerek ulaşır', '🌐 Chaque annonce que vous écrivez arrive traduite dans la langue de chaque pèlerin', '🌐 আপনি যা লিখবেন, প্রত্যেক হাজির কাছে তার ভাষায় অনুবাদ হয়ে পৌঁছাবে', '🌐 هر اعلانی بنویسید، به زبان هر زائر ترجمه می‌شود و به او می‌رسد', '🌐 Apa sahaja yang anda tulis sampai kepada setiap jemaah dalam bahasanya', '🌐 Всё, что вы напишете, каждый паломник получит на своём языке'],
+  });
+
   /* ---------- first paint in the saved language ---------- */
   if (lang !== 'ar') page();
   else document.documentElement.classList.remove('i18n-wait');

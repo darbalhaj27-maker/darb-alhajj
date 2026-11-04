@@ -225,7 +225,10 @@ function ingest(ev, src) {
     case 'notice':
       if (!fromSup || ev.t < S.clearedAt) break;
       S.notices.push({ id: ev.id, text: String(ev.text || '').slice(0, 140), t: ev.t });
-      if (src === 'remote' && Session.role === 'pilgrim' && fresh(ev, 120000)) { toast(T('📢 تنبيه من المشرفة: {text}', { text: T(String(ev.text || '').slice(0, 140)) }), 5000); Sound.chime(); haptic([120, 80, 120]); }
+      if (src === 'remote' && Session.role === 'pilgrim' && fresh(ev, 120000)) {
+        MT.ready(String(ev.text || '').slice(0, 140)).then((txt) => toast(T('📢 تنبيه من المشرفة: {text}', { text: txt }), 5000));
+        Sound.chime(); haptic([120, 80, 120]);
+      }
       break;
     case 'clear': {
       const cut = Math.min(ev.before || ev.t, ev.t);
@@ -647,7 +650,8 @@ function renderPilgrim() {
 
   $('#pStageBanner').innerHTML = S.stage ? `<div class="banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><div>${T('مجموعتك متجهة الآن إلى {s}', { s: esc(T(S.stage.stage)) })}<small>${T('حددتها المشرفة {ago}', { ago: ago(S.stage.t) })}</small></div></div>` : '';
   const n = S.notices.filter((x) => Date.now() - x.t < 90 * 60000).sort((a, b) => b.t - a.t)[0];
-  $('#pNotice').innerHTML = n ? `<div class="banner notice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7"/></svg><div>${esc(T(n.text))}<small>${T('تنبيه من المشرفة · {ago}', { ago: ago(n.t) })}</small></div></div>` : '';
+  const nm = n ? MT.show(n.text) : null;      // the supervisor's own words arrive translated into this phone's language
+  $('#pNotice').innerHTML = n ? `<div class="banner notice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7"/></svg><div>${esc(nm.text)}<small>${T('تنبيه من المشرفة · {ago}', { ago: ago(n.t) })}${nm.auto ? ' · 🌐 ' + T('مترجم تلقائيًا') : ''}</small></div></div>` : '';
 
   const r = myOpenReport() || (() => { const l = myLatestReport(); return l && Date.now() - ((S.status[l.rid] || {}).resolve || 0) < 60000 && reportStatus(l.rid) === 'resolve' ? l : null; })();
   $('#pIdle').classList.toggle('hidden', !!r);
@@ -1456,6 +1460,89 @@ if ('serviceWorker' in navigator) {
   });
 }
 window.addEventListener('hashchange', () => { if (location.hash === '#super') openFromNotification(); });
+
+/* ===================== live translation of what the supervisor types ===================== */
+// Built-in sentences (buttons, stages, preset notices) come from i18n.js. Free text the supervisor writes herself
+// is translated on each pilgrim's phone into that phone's language: MyMemory (free, no key), Google as a backup.
+// If both are unreachable the original text is shown, exactly as before.
+function decodeHtml(s) { const d = document.createElement('textarea'); d.innerHTML = s; return d.value; }
+async function translateOnline(text, sl, tl) {
+  const get = async (url, pick) => {
+    const ctl = window.AbortController ? new AbortController() : null;
+    const to = setTimeout(() => { if (ctl) ctl.abort(); }, 7000);
+    try {
+      const r = await fetch(url, ctl ? { signal: ctl.signal } : {});
+      if (!r.ok) throw new Error('http ' + r.status);
+      return pick(await r.json());
+    } finally { clearTimeout(to); }
+  };
+  const q = encodeURIComponent(text);
+  const tries = [
+    () => get(`https://api.mymemory.translated.net/get?q=${q}&langpair=${encodeURIComponent(sl + '|' + tl)}`, (j) => {
+      const t = j && j.responseData && j.responseData.translatedText;
+      if (!t || Number(j.responseStatus) !== 200 || /MYMEMORY WARNING|QUERY LENGTH|INVALID|DISTINCT LANGUAGES/i.test(t)) throw new Error('mymemory');
+      return decodeHtml(t);
+    }),
+    () => get(`https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=${sl}&tl=${tl}&q=${q}`, (j) => {
+      const t = Array.isArray(j) && Array.isArray(j[0]) ? j[0].map((x) => (x && x[0]) || '').join('') : '';
+      if (!t) throw new Error('google');
+      return t;
+    }),
+    () => get(`https://lingva.ml/api/v1/${sl}/${tl}/${q}`, (j) => {
+      if (!j || !j.translation) throw new Error('lingva');
+      return j.translation;
+    }),
+  ];
+  // a "translation" that is still the same text (or still Arabic for a Latin/Cyrillic/Bengali language) is not one: try the next service
+  const latinOrOther = ['en', 'id', 'tr', 'fr', 'ms', 'ru', 'bn'].includes(tl);
+  const good = (t) => !!t && !!t.trim() && t.trim() !== text.trim() && !(latinOrOther && /[؀-ۿ]/.test(t));
+  for (const f of tries) { try { const t = await f(); if (good(t)) return t.trim(); } catch (e) { /* try the next one */ } }
+  return null;
+}
+const MT = {
+  cache: (() => { const c = store.get('mt', {}); return c && typeof c === 'object' ? c : {}; })(),
+  busy: {},
+  src: (text) => (/[؀-ۿ]/.test(text) ? 'ar' : 'en'),
+  /** what to show right now; starts a translation in the background when needed */
+  show(text) {
+    text = String(text || '');
+    const dict = T(text);
+    if (dict !== text || !text.trim()) return { text: dict, auto: false };        // preset notice: built-in translation
+    const tl = I18N.lang, sl = this.src(text);
+    if (tl === sl) return { text, auto: false };
+    const hit = this.cache[tl + '|' + text];
+    if (hit) return { text: hit, auto: true };
+    this.fetch(text, sl, tl);
+    return { text, auto: false };
+  },
+  /** the best text within ms (used for the toast) */
+  ready(text, ms = 3500) {
+    const now = this.show(text);
+    const tl = I18N.lang, sl = this.src(text), k = tl + '|' + text;
+    if (now.auto || now.text !== text || tl === sl || !text.trim()) return Promise.resolve(now.text);
+    return Promise.race([
+      (this.busy[k] || this.fetch(text, sl, tl)).then((t) => t || text),
+      new Promise((res) => setTimeout(() => res(this.cache[k] || text), ms)),
+    ]);
+  },
+  fetch(text, sl, tl) {
+    const k = tl + '|' + text;
+    if (this.busy[k]) return this.busy[k];
+    const p = translateOnline(text, sl, tl).then((t) => {
+      if (t && t !== text.trim()) {
+        this.cache[k] = t;
+        const ks = Object.keys(this.cache);
+        if (ks.length > 150) ks.slice(0, ks.length - 150).forEach((x) => delete this.cache[x]);
+        store.set('mt', this.cache);
+        scheduleRender();
+      }
+      return this.cache[k] || null;
+    }).catch(() => null);
+    this.busy[k] = p;
+    p.then(() => setTimeout(() => { if (!this.cache[k]) delete this.busy[k]; }, 30000));   // failed: try again later
+    return p;
+  },
+};
 
 /* ===================== language picker ===================== */
 const TICK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>';
